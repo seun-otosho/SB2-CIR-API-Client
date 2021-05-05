@@ -9,7 +9,7 @@ from datetime import datetime
 from json import dumps, loads
 from logging.handlers import TimedRotatingFileHandler
 from os import makedirs, sep
-from os.path import exists, sep
+from os.path import exists, join, sep
 from re import match
 
 from tortoise import Tortoise
@@ -51,15 +51,15 @@ pdir = os.path.abspath(os.path.join(os.path.abspath(__file__), os.pardir))
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent
 
 # pdf_txt = datetime.now().strftime('%Y%b%d') + 'pdf' + datetime.now().strftime('%H')
 pdf_txt = datetime.now().strftime('%Y.%m%b%d%a') + sep + test.split('&')[0].split('=')[1] + sep + 'pdf'
 jdir = datetime.now().strftime('%Y.%m%b%d%a') + sep + test.split('&')[0].split('=')[1] + sep + 'json'
 
 
-json_dir = pdir + sep + 'reports' + sep + jdir
-pdf_dir = pdir + sep + 'reports' + sep + pdf_txt
+json_dir = join(BASE_DIR, 'reports', 'jdir')
+pdf_dir = join(BASE_DIR, 'reports', pdf_txt)
 if not exists(json_dir):
     makedirs(json_dir)
 
