@@ -25,7 +25,7 @@ class Ruid(Model):
     ruid = fields.BigIntField(null=True)
     # bvn = fields.BigIntField(null=True)
     bvn: fields.ForeignKeyRelation[Request] = fields.ForeignKeyField(
-        "models.Request", related_name="ruids"
+        "models.Request", related_name="ruids", null=True
     )
     date_process = fields.DatetimeField(auto_now_add=True)
 

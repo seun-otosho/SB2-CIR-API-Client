@@ -12,6 +12,7 @@ from os import makedirs, sep
 from os.path import exists, join, sep
 from re import match
 
+from django.core.serializers.json import DjangoJSONEncoder
 from tortoise import Tortoise
 
 import requests
@@ -276,18 +277,19 @@ def call_live_request_dict(kwargs):
 
 @app.task
 def call_live_request_dict_re(kwargs):
-    run(Tortoise.init(db_url="sqlite://db.sqlite3",
-                      modules={"models": ["models"]}))
+    run(Tortoise.init(db_url="sqlite://db.sqlite3", modules={"models": ["models"]}))
 
     acno, rrqst = None, None
-    acname, bvn, fn, x = kwargs['cust_name'], kwargs['bvn'], kwargs['cust_name'].strip(
-    ), kwargs['x']
+    acname, bvn, fn, x = kwargs['cust_name'], kwargs['bvn'], kwargs['cust_name'].strip(), kwargs['x']
     kwargs['cust_name'] = kwargs['cust_name'].strip()
+    kwargs['bvn'] = kwargs['bvn'] if bvn not in (None, '', 'nan') else None
     if str(fn).strip() == '':
         fn = acname
-    logger = get_logger(acname + ' - ' + bvn)
-    rrqst = run(db.fetch_one(
-        query=f"""select * from requests where bvn = {int(kwargs['bvn'])}"""))
+    logger = get_logger(acname + ' - ' + bvn) if bvn and bvn not in (None, '', 'nan') else get_logger(acname)
+    try:
+        rrqst = run(db.fetch_one(query=f"""select * from requests where bvn = {int(kwargs['bvn'])}"""))
+    except:
+        rrqst = None
 
     if rrqst:
         logger.info("\n\n\t\tTreat3D", kwargs, '\n\n', rrqst)
@@ -295,44 +297,45 @@ def call_live_request_dict_re(kwargs):
         if 'i' not in kwargs:
             kwargs['i'] = 0
 
-        bvn_or_acno = bvn if bvn else acno
-        pdf__f = "{}{}{} - {}.pdf".format(pdf_dir, sep, acname, bvn_or_acno)
+        bvn_or_acno = bvn if bvn not in (None, '', 'nan') else acno
+        pdf__f = f"{pdf_dir}{sep}{acname}.pdf" if bvn_or_acno is None else f"{pdf_dir}{sep}{acname} - {bvn_or_acno}.pdf"
         logger.info(pdf__f)
         if not exists(pdf__f):
-            logger.info(dumps(kwargs, indent=4))
+            logger.info(dumps(kwargs, sort_keys=True, cls=DjangoJSONEncoder, indent=4))
             # payload = f"""{test}&strRequest={bvn_search(bvn)}"""
             # .format(
             # test, bvn_search(bvn))
             # test,
-            payload = f"""{test}&strRequest={name_id_search(fn, kwargs['dob'], gender.get(kwargs['gender'].strip().upper(), '001'))}"""
-            # payload = f"""{test}&strRequest={combine_search(fn, gender.get(kwargs['gender'].strip().upper(), '001'), kwargs['dob'], acno, bvn)}"""
+            payload = f"""{test}&strRequest={name_id_search(
+                fn, kwargs['dob'].strftime("%d-%b-%Y"), gender.get(kwargs['gender'].strip().upper(), '001')
+            )}"""
+            # payload = f"""{test}&strRequest={combine_search(
+            # fn, gender.get(kwargs['gender'].strip().upper(), '001'), kwargs['dob'].strftime("%d-%b-%Y"), acno, bvn
+            # )}"""
             # )
             headers = {'content-type': "application/x-www-form-urlencoded"}
-            logger.info(
-                "{} {}".format('^' * 55,
-                               "\ncombined search request sent for {}\nrequest payload is\n{}".format(fn, payload)))
-            response = requests.request(
-                "POST", url, data=payload, headers=headers)
-            kwargs['dob'] = datetime.strptime(
-                kwargs['dob'], "%d-%b-%Y").strftime("%Y-%m-%d")
-            rrqst = run(Request.create(
-                cust_name=kwargs['cust_name'], dob=kwargs['dob'], gender=kwargs['gender'], bvn=kwargs['bvn']))
-            kwargs['dob'] = datetime.strptime(
-                kwargs['dob'], "%Y-%m-%d").strftime("%d-%b-%Y")
+            logger.info(f"{'^' * 55} \nName ID search request sent for {fn}\nrequest payload is\n{payload}")
+            response = requests.request("POST", url, data=payload, headers=headers)
+            # kwargs['dob'] = datetime.strptime(kwargs['dob'], "%d-%b-%Y").strftime("%Y-%m-%d")
+            # kwargs['dob'] = kwargs['dob'].strftime("%Y-%m-%d")
+            try:
+                rrqst = run(Request.create(
+                    cust_name=kwargs['cust_name'],
+                    dob=kwargs['dob'].strftime("%Y-%m-%d"),
+                    gender=kwargs['gender'], bvn=kwargs['bvn']))
+            except Exception as e:
+                logger.error(e)
+            # kwargs['dob'] = datetime.strptime(kwargs['dob'], "%Y-%m-%d").strftime("%d-%b-%Y")
             if 'ERROR' in response.text and 'CODE' in response.text:
                 logger.error(
                     dumps(order3D2dict(xmltodict.parse(response.text)), indent=4))
             else:
                 # rez = pdfRez(acname, bvn, response.text, x)
 
-                rez, rez_code, rez_dict, pdf_rez, xml_rez = hndl_rez(
-                    fn, response, logger)
+                rez, rez_code, rez_dict, pdf_rez, xml_rez = hndl_rez(fn, response, logger)
 
                 if rez[0]:
-                    # if rez[1] == response.text:
-                    #     rezstr = response.text[79:-9]
-                    # else:
-                    #     rezstr = rez[1]
+
                     if pdf_rez and pdf_rez not in ('', None):
                         try:
                             r = xml_rez['DATAPACKET']['BODY']['CONSUMER_PROFILE']['CONSUMER_DETAILS']['RUID']
@@ -345,9 +348,8 @@ def call_live_request_dict_re(kwargs):
                                 # if both:
                                 #     with open("{}{}{} - {}.json".format(jdir, sep, acname, bvn_or_acno), 'w') as jf:
                                 #         jf.write(dumps(xml_rez['DATAPACKET']['BODY'], indent=4))
-                                logger_txt.info(acname + ' - ' + bvn_or_acno)
-                                logger.info(
-                                    "file {}-{}.pdf written to disk".format(acname, bvn_or_acno))
+                                # logger_txt.info(acname + ' - ' + bvn_or_acno)
+                                logger.info(f"file {pdf__f.split(sep)[-1]} has been written to disk")
                                 logger.info('#' * 88)
                                 return bvn
                             except Exception as e:
@@ -361,20 +363,17 @@ def call_live_request_dict_re(kwargs):
                         if len(ruids) > 0:
                             payload = """{}&strRequest={}""".format(
                                 test, merge_search(ref, ruids))
-                            logger.info(
-                                "merged report spool request sent for {} using {}\nrequest payload is\n{}".format(
-                                    fn, ', '.join(ruids), payload))
+                            logger.info(f"""merged report spool request sent for {fn} using {', '.join(
+                                    ruids
+                                )}\nrequest payload is\n{payload}""")
                         else:
-                            payload = """{}&strRequest={}""".format(
-                                test, no_hit_search(ref))
-                            logger.info(
-                                "no hit report spool request sent for {} using {}\nrequest payload is\n{}".format(
-                                    fn, ', '.join([ref]), payload))
-                        response = requests.request(
-                            "POST", url, data=payload, headers=headers)
+                            payload = f"""{test}&strRequest={no_hit_search(ref)}"""
+                            logger.info(f"""no hit report spool request sent for {fn} using {', '.join([
+                                ref
+                            ])}\nrequest payload is\n{payload}""")
+                        response = requests.request("POST", url, data=payload, headers=headers)
 
-                        rez, rez_code, rez_dict, pdf_rez, xml_rez = hndl_rez(
-                            fn, response, logger)
+                        rez, rez_code, rez_dict, pdf_rez, xml_rez = hndl_rez(fn, response, logger)
 
                         if rez[0]:
                             for r in ruids:
@@ -385,12 +384,8 @@ def call_live_request_dict_re(kwargs):
                                     try:
                                         fh.write(b64decode(pdf_rez))
                                         logger_txt.info(bvn_or_acno)
-                                        # if both:
-                                        #     with open(
-                                        #             "{}{}{} - {}.json".format(jdir, sep, acname, bvn_or_acno), 'w'
-                                        #     ) as jf: jf.write(dumps(xml_rez['DATAPACKET']['BODY'], indent=4))
-                                        logger.info(
-                                            "file {}-{}.pdf written to disk".format(acname, bvn_or_acno))
+
+                                        logger.info(f"file {pdf__f.split(sep)[-1]} has been written to disk")
                                         logger.info('#' * 88)
                                         return bvn
                                     except Exception as e:
@@ -524,7 +519,8 @@ def no_hit_search(ref):
 
 
 def decide_merge(reqdict, d):
-    logger = get_logger(reqdict['cust_name'] + '-' + reqdict['bvn'])
+    logger_text = reqdict['cust_name'] + '-' + reqdict['bvn'] if reqdict['bvn'] else reqdict['cust_name']
+    logger = get_logger(logger_text)
     # doblogger = get_logger('dob')
     d, dob_ratio, x = xmltodict.parse(d), None, reqdict['i']
     d = order3D2dict(d)
@@ -629,8 +625,8 @@ def decide_merge(reqdict, d):
 
 
 def decide_merge_hyb(reqdict, d):
-    logger = get_logger(reqdict['cust_name'] + '-' + reqdict['bvn'])
-
+    logger_text = reqdict['cust_name'] + '-' + reqdict['bvn'] if reqdict['bvn'] else reqdict['cust_name']
+    logger = get_logger(logger_text)
     d, dob_ratio, x = xmltodict.parse(d), None, reqdict['i']
     ruids, ref, d = [], d['DATAPACKET']['@REFERENCE-NO'], order3D2dict(d)
     l = d['DATAPACKET']['BODY']['SEARCH-RESULT-LIST']['SEARCH-RESULT-ITEM']
@@ -674,11 +670,11 @@ def sb_conf_score(i, logger, ruids):
 def dob_check(i, logger, name_ratio, reqdict, ruids):
     # DOB Check
     try:
-        dob_ratio = fuzz.partial_ratio(str(datetime.strptime(i['@DATE-OF-BIRTH'], '%d-%b-%Y')),
-                                       str(datetime.strptime(reqdict['dob'], '%d-%b-%Y')))
-        logger.info(
-            f"""FPartR({str(datetime.strptime(i['@DATE-OF-BIRTH'], '%d-%b-%Y'))}, {str(datetime.strptime(reqdict['dob'], '%d-%b-%Y'))}) is {dob_ratio}""")
-        if name_ratio >= 94 and dob_ratio == 100:
+        sdob = str(datetime.strptime(i['@DATE-OF-BIRTH'], '%d-%b-%Y').date())
+        dob_ratio = fuzz.token_set_ratio(str(reqdict['dob']), sdob)
+
+        logger.info( f"""FPartR({sdob}, {str(reqdict['dob'])}) is {dob_ratio=}""")
+        if name_ratio >= 94 and dob_ratio >= 90:
             ruids.append(i['@BUREAU-ID'])
     except Exception as e:
         logger.error(e)
@@ -688,8 +684,7 @@ def phone_check(i, logger, name_ratio, reqdict, ruids):
     # Phone Check
     try:
         phone_ratio = fuzz.ratio(i['@PHONE-NUMBER'][-10:], reqdict['phone'][-10:])
-        logger.info(
-            f"FRatio('{i['@PHONE-NUMBER']}', '{reqdict['phone']}') is {phone_ratio}")
+        logger.info(f"FRatio('{i['@PHONE-NUMBER']}', '{reqdict['phone']}') is {phone_ratio=}")
         if name_ratio >= 94 and phone_ratio == 100:
             ruids.append(i['@BUREAU-ID'])
     except Exception as e:
@@ -700,8 +695,7 @@ def name_check(i, logger, name_ratio, reqdict, ruids, sb_confscr):
     # Name Check
     try:
         name_ratio = fuzz.token_set_ratio(i['@NAME'], reqdict['cust_name'])
-        logger.info(
-            f"FTSETR('{i['@NAME']}', '{reqdict['cust_name']}') is {name_ratio}")
+        logger.info(f"FTSETR('{i['@NAME']}', '{reqdict['cust_name']}') is {name_ratio=}")
         if sb_confscr >= 92 and name_ratio >= 94:
             ruids.append(i['@BUREAU-ID'])
     except Exception as e:

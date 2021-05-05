@@ -34,6 +34,7 @@ df['bvn'] = df.bvn.astype(str)
 ddf['bvn'] = ddf.bvn.astype(str)
 
 df = df[~df.bvn.isin(ddf.bvn)]
+df['bvn'] = df.bvn.apply(lambda x: int(x) if x not in (None, '', 'nan') else '')
 
 df.reset_index(drop=True, inplace=True)
 
@@ -45,7 +46,8 @@ logger.info(f"{df.shape=}\t|\t{ddf.shape=}")
 
 
 try:
-    df['dob'] = df['dob'].apply(lambda x: dob2s(x))
+    df['dob'] = pd.to_datetime(df['dob'])
+    df['dob'] = df.dob.dt.date
 except Exception as e:
     logger.error(e)
 
@@ -63,7 +65,7 @@ for d in df_dict_list:
     try:
         if d['dob'] != '':
             d['cust_name'] = d['cust_name'].strip()
-            # call_live_request_dict_re(d)
-            call_live_request_dict_re.delay(d)
+            call_live_request_dict_re(d)
+            # call_live_request_dict_re.delay(d)
     except Exception as e:
         glogger.error(e)
