@@ -1,0 +1,8 @@
+tortoise
+pandas
+numpy
+requests
+xmltodict
+celery
+fuzzywuzzy
+databases
