@@ -12,18 +12,16 @@ from os import makedirs, sep
 from os.path import exists, join, sep
 from re import match
 
-from django.core.serializers.json import DjangoJSONEncoder
-from tortoise import Tortoise
-
 import requests
 import xmltodict
 from celery import Celery
+from databases import Database
+from django.core.serializers.json import DjangoJSONEncoder
 from fuzzywuzzy import fuzz
+from tortoise import Tortoise
 
 from models import Ruid, Request
-
 from test_credentials import test
-from databases import Database
 
 db = Database('sqlite:///db.sqlite3')
 
@@ -34,13 +32,16 @@ app = Celery(
     'ioc_cir_pro',
     broker='redis://localhost:6379/0',
     # backend='redis://localhost:6379/0',
-    CELERY_RESULT_BACKEND='db+sqlite:///db.sqlite',
-    CELERYD_MAX_TASKS_PER_CHILD=50
+    backend = "db+sqlite:///db.sqlite3",
+    CELERYD_MAX_TASKS_PER_CHILD=50,
+
 )
 
 app.conf.update(
     task_acks_late=True,
-    worker_prefetch_multiplier=1
+    worker_prefetch_multiplier=1,
+    cache_backend = "db+sqlite:///db.sqlite3",
+    database_engine_options = {'echo': True},
 )
 
 url = "https://webserver.creditreferencenigeria.net/crcweb/liverequestinvoker.asmx/PostRequest"
@@ -53,20 +54,22 @@ from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent
+UP_BASE_DIR = Path(__file__).resolve().parent.parent
 
 # pdf_txt = datetime.now().strftime('%Y%b%d') + 'pdf' + datetime.now().strftime('%H')
-pdf_txt = datetime.now().strftime('%Y.%m%b%d%a') + sep + test.split('&')[0].split('=')[1] + sep + 'pdf'
-jdir = datetime.now().strftime('%Y.%m%b%d%a') + sep + test.split('&')[0].split('=')[1] + sep + 'json'
+date_str = datetime.now().strftime('%Y-%m%b-%d%a')
+dateHstr = datetime.now().strftime('%Y-%m%b-%d%a %H')
+user_str = test.split('&')[0].split('=')[1]
 
+json_dir = join(UP_BASE_DIR, dateHstr, 'reports', user_str, 'JSONs')
+pdf_dir = join(UP_BASE_DIR, dateHstr, 'reports', user_str, 'PDFs')
+log_dir = join(UP_BASE_DIR, dateHstr, 'logs', user_str)
 
-json_dir = join(BASE_DIR, 'reports', 'jdir')
-pdf_dir = join(BASE_DIR, 'reports', pdf_txt)
 if not exists(json_dir):
     makedirs(json_dir)
 
 if not exists(pdf_dir):
     makedirs(pdf_dir)
-log_dir = pdf_dir + '_logs' + sep
 
 loggers = {}
 # get_logger, url, pdf_dir, logger_txt
@@ -79,7 +82,7 @@ gender = {
 }
 
 
-def get_logger(logger_name=None, level=level, mini=False):
+def get_logger(logger_name=dateHstr, level=level, mini=False):
     logger_name = ''.join(logger_name.split(sep)) if logger_name and sep in logger_name else logger_name
 
     global loggers
@@ -117,7 +120,7 @@ def get_logger(logger_name=None, level=level, mini=False):
         return l
 
 
-logger_txt = get_logger(pdf_txt, level, True)
+logger_txt = get_logger(user_str, level, True)
 
 
 # def processed(bvn):
@@ -247,7 +250,7 @@ def call_live_request_dict(kwargs):
                                         fh.write(b64decode(pdf_rez))
                                         logger_txt.info(bvn_or_acno)
                                         if both:
-                                            with open("{}{}{} - {}.json".format(jdir, sep, acname, bvn_or_acno),
+                                            with open("{}{}{} - {}.json".format(json_dir, sep, acname, bvn_or_acno),
                                                       'w') as jf:
                                                 jf.write(dumps(xml_rez['DATAPACKET']['BODY'], indent=4))
                                         logger.info("file {}-{}.pdf written to disk".format(acname, bvn_or_acno))
@@ -277,12 +280,13 @@ def call_live_request_dict(kwargs):
 
 @app.task
 def call_live_request_dict_re(kwargs):
+    """Process one(1) request"""
     run(Tortoise.init(db_url="sqlite://db.sqlite3", modules={"models": ["models"]}))
 
     acno, rrqst = None, None
     acname, bvn, fn, x = kwargs['cust_name'], kwargs['bvn'], kwargs['cust_name'].strip(), kwargs['x']
-    kwargs['cust_name'] = kwargs['cust_name'].strip()
     kwargs['bvn'] = kwargs['bvn'] if bvn not in (None, '', 'nan') else None
+
     if str(fn).strip() == '':
         fn = acname
     logger = get_logger(acname + ' - ' + bvn) if bvn and bvn not in (None, '', 'nan') else get_logger(acname)
@@ -302,30 +306,35 @@ def call_live_request_dict_re(kwargs):
         logger.info(pdf__f)
         if not exists(pdf__f):
             logger.info(dumps(kwargs, sort_keys=True, cls=DjangoJSONEncoder, indent=4))
+            logger.info(f"kwargs['dob']\n\n\n{kwargs['dob']=}")
+            kwargs['dob'] = kwargs['dob'] if isinstance(
+                kwargs['dob'], datetime
+            ) else datetime.strptime(kwargs['dob'][:-9], "%Y-%m-%d").date()
+            logger.info(f"kwargs['dob']\n\n\n{kwargs['dob']=}")
+            # return
+            rqst_dob_str, rqst_gender = (
+                kwargs['dob'].strftime("%d-%b-%Y"), gender.get(kwargs['gender'].strip().upper(), '001')
+            )
             # payload = f"""{test}&strRequest={bvn_search(bvn)}"""
-            # .format(
-            # test, bvn_search(bvn))
-            # test,
-            payload = f"""{test}&strRequest={name_id_search(
-                fn, kwargs['dob'].strftime("%d-%b-%Y"), gender.get(kwargs['gender'].strip().upper(), '001')
-            )}"""
-            # payload = f"""{test}&strRequest={combine_search(
-            # fn, gender.get(kwargs['gender'].strip().upper(), '001'), kwargs['dob'].strftime("%d-%b-%Y"), acno, bvn
-            # )}"""
-            # )
+
+            payload = f"""{test}&strRequest={name_id_search(fn, rqst_dob_str, rqst_gender)}"""
+
+            # payload = f"""{test}&strRequest={combine_search(fn, rqst_gender, rqst_dob_str, acno, bvn)}"""
+
             headers = {'content-type': "application/x-www-form-urlencoded"}
             logger.info(f"{'^' * 55} \nName ID search request sent for {fn}\nrequest payload is\n{payload}")
             response = requests.request("POST", url, data=payload, headers=headers)
-            # kwargs['dob'] = datetime.strptime(kwargs['dob'], "%d-%b-%Y").strftime("%Y-%m-%d")
-            # kwargs['dob'] = kwargs['dob'].strftime("%Y-%m-%d")
+
             try:
-                rrqst = run(Request.create(
-                    cust_name=kwargs['cust_name'],
-                    dob=kwargs['dob'].strftime("%Y-%m-%d"),
-                    gender=kwargs['gender'], bvn=kwargs['bvn']))
+                rrqst = run(
+                    Request.create(
+                        cust_name=kwargs['cust_name'], dob=kwargs['dob'].strftime("%Y-%m-%d"),
+                        gender=kwargs['gender'], bvn=kwargs['bvn'], phone=kwargs['phone']
+                    )
+                )
             except Exception as e:
                 logger.error(e)
-            # kwargs['dob'] = datetime.strptime(kwargs['dob'], "%Y-%m-%d").strftime("%d-%b-%Y")
+
             if 'ERROR' in response.text and 'CODE' in response.text:
                 logger.error(
                     dumps(order3D2dict(xmltodict.parse(response.text)), indent=4))
@@ -520,7 +529,7 @@ def no_hit_search(ref):
 
 def decide_merge(reqdict, d):
     logger_text = reqdict['cust_name'] + '-' + reqdict['bvn'] if reqdict['bvn'] else reqdict['cust_name']
-    logger = get_logger(logger_text)
+    logger = get_logger(f"{logger_text}-old")
     # doblogger = get_logger('dob')
     d, dob_ratio, x = xmltodict.parse(d), None, reqdict['i']
     d = order3D2dict(d)
@@ -646,7 +655,7 @@ def decide_merge_hyb(reqdict, d):
         dob_check(i, logger, name_ratio, reqdict, ruids)
 
         phone_check(i, logger, name_ratio, reqdict, ruids)
-        logger.info(f"{n}of{ll}" + f"~{n}of{ll}" * 64)
+        logger.info(f"{n}of{ll} " + f"~{n}of{ll} " * 64)
 
     logger.info(ref)
     ruids = tuple(set(ruids))

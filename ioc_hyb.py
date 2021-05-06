@@ -1,28 +1,17 @@
 # coding: utf-8
 
-# In[71]:
 
-
-import inspect
-import logging
-import os
-from datetime import datetime
-from logging.handlers import TimedRotatingFileHandler
-from os import makedirs, sep
-from os.path import exists
+from os import sep
 
 import pandas as pd
 
-from numpy import array_split
-
-from ioc_cir_pro import (db, get_logger, logger_txt, pdir,
-                         pdf_txt, call_live_request_dict_re, dob2s, run)
+from ioc_cir_pro import (db, get_logger, UP_BASE_DIR, call_live_request_dict_re, run)
 
 # from time import sleep
 logger = get_logger()
 
 df = pd.read_csv(
-    pdir + sep + 'requests' + sep + 'batch_cir.txt', dtype=str,
+    str(UP_BASE_DIR) + sep + 'requests' + sep + 'batch_cir.txt', dtype=str,
     keep_default_na=True, sep='|', thousands=',', encoding="ISO-8859-1"
 )
 done_data = run(db.fetch_all(query="""select * from requests"""))
@@ -65,7 +54,8 @@ for d in df_dict_list:
     try:
         if d['dob'] != '':
             d['cust_name'] = d['cust_name'].strip()
-            call_live_request_dict_re(d)
-            # call_live_request_dict_re.delay(d)
+            logger.info(f"d['dob']\n\n\n{d['dob']=}")
+            # call_live_request_dict_re(d)
+            call_live_request_dict_re.delay(d)
     except Exception as e:
         glogger.error(e)
