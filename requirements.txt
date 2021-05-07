@@ -6,3 +6,4 @@ xmltodict
 celery
 fuzzywuzzy
 databases
+snoop
