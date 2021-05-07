@@ -13,16 +13,20 @@ from os.path import exists, join, sep
 from re import match
 
 import requests
+import snoop
 import xmltodict
 from celery import Celery
 from databases import Database
 from django.core.serializers.json import DjangoJSONEncoder
 from fuzzywuzzy import fuzz
-import snoop
+from heartrate import trace
 from tortoise import Tortoise
 
 from models import Ruid, Request
 from test_credentials import test
+
+trace(browser=True)
+
 
 db = Database('sqlite:///db.sqlite3')
 
