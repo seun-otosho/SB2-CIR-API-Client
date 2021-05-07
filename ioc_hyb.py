@@ -40,21 +40,18 @@ try:
 except Exception as e:
     logger.error(e)
 
-
 glogger = get_logger()
 
 df['x'] = df.index
 df.fillna('', inplace=True)
 
-
-df_dict_list = df[['cust_name', 'dob', 'bvn', 'gender', 'phone', 'x']].to_dict('records')
-
+df_dict_list = df[['cust_name', 'dob', 'bvn', 'gender', 'phone', 'x']].to_dict('records')  # .sample(5)
 
 for d in df_dict_list:
     try:
         if d['dob'] != '':
             d['cust_name'] = d['cust_name'].strip()
-            logger.info(f"d['dob']\n\n\n{d['dob']=}")
+            # logger.info(f"d['dob']\n\n\n{d['dob']=}")
             # call_live_request_dict_re(d)
             call_live_request_dict_re.delay(d)
     except Exception as e:

@@ -5,7 +5,7 @@ import logging
 import os
 from asyncio import run
 from base64 import b64decode
-from datetime import datetime
+from datetime import date, datetime
 from json import dumps, loads
 from logging.handlers import TimedRotatingFileHandler
 from os import makedirs, sep
@@ -18,6 +18,7 @@ from celery import Celery
 from databases import Database
 from django.core.serializers.json import DjangoJSONEncoder
 from fuzzywuzzy import fuzz
+import snoop
 from tortoise import Tortoise
 
 from models import Ruid, Request
@@ -32,7 +33,7 @@ app = Celery(
     'ioc_cir_pro',
     broker='redis://localhost:6379/0',
     # backend='redis://localhost:6379/0',
-    backend = "db+sqlite:///db.sqlite3",
+    backend="db+sqlite:///db.sqlite3",
     CELERYD_MAX_TASKS_PER_CHILD=50,
 
 )
@@ -40,8 +41,8 @@ app = Celery(
 app.conf.update(
     task_acks_late=True,
     worker_prefetch_multiplier=1,
-    cache_backend = "db+sqlite:///db.sqlite3",
-    database_engine_options = {'echo': True},
+    cache_backend="db+sqlite:///db.sqlite3",
+    database_engine_options={'echo': True},
 )
 
 url = "https://webserver.creditreferencenigeria.net/crcweb/liverequestinvoker.asmx/PostRequest"
@@ -131,154 +132,8 @@ logger_txt = get_logger(user_str, level, True)
 #     return True if bvn in recon_list else False
 
 
-# @app.task
-def call_live_request_dict(kwargs):
-    run(Tortoise.init(db_url="sqlite://db.sqlite3", modules={"models": ["models"]}))
-
-    acno, rrqst = None, None
-    acname, bvn, fn, x = kwargs['cust_name'], kwargs['bvn'], kwargs['cust_name'].strip(), kwargs['x']
-    kwargs['cust_name'] = kwargs['cust_name'].strip()
-    if str(fn).strip() == '':
-        fn = acname
-    logger = get_logger(acname + ' - ' + bvn)
-    rrqst = run(db.fetch_one(query=f"""select * from requests where bvn = {int(kwargs['bvn'])}"""))
-
-    if rrqst:
-        logger.info("\n\n\t\tTreat3D", kwargs, '\n\n', rrqst)
-    else:
-        if 'i' not in kwargs:
-            kwargs['i'] = 0
-
-        bvn_or_acno = bvn if bvn else acno
-        pdf__f = "{}{}{} - {}.pdf".format(pdf_dir, sep, acname, bvn_or_acno)
-        logger.info(pdf__f)
-        if not exists(pdf__f):
-            logger.info(dumps(kwargs, indent=4))
-            # payload = f"""{test}&strRequest={bvn_search(bvn)}"""
-            # .format(
-            # test, bvn_search(bvn))
-            # test,
-            # payload = f"""{test}&strRequest={name_id_search(fn, kwargs['dob'], gender.get(kwargs['gender'].strip().upper(), '001'))}"""
-            payload = f"""{test}&strRequest={combine_search(fn, gender.get(kwargs['gender'].strip().upper(), '001'), kwargs['dob'], acno, bvn)}"""
-            # )
-            headers = {'content-type': "application/x-www-form-urlencoded"}
-            logger.info(
-                "{} {}".format('^' * 55,
-                               "\ncombined search request sent for {}\nrequest payload is\n{}".format(fn, payload)))
-            response = requests.request("POST", url, data=payload, headers=headers)
-            kwargs['dob'] = datetime.strptime(kwargs['dob'], "%d-%b-%Y").strftime("%Y-%m-%d")
-            rrqst = run(Request.create(
-                cust_name=kwargs['cust_name'], dob=kwargs['dob'], gender=kwargs['gender'], bvn=kwargs['bvn']))
-            kwargs['dob'] = datetime.strptime(kwargs['dob'], "%Y-%m-%d").strftime("%d-%b-%Y")
-            if 'ERROR' in response.text and 'CODE' in response.text:
-                logger.error(dumps(order3D2dict(xmltodict.parse(response.text)), indent=4))
-            else:
-                # rez = pdfRez(acname, bvn, response.text, x)
-
-                rez, rez_code, rez_dict, pdf_rez, xml_rez = hndl_rez(fn, response, logger)
-
-                if rez[0]:
-                    # if rez[1] == response.text:
-                    #     rezstr = response.text[79:-9]
-                    # else:
-                    #     rezstr = rez[1]
-                    if pdf_rez and pdf_rez not in ('', None):
-                        try:
-                            r = xml_rez['DATAPACKET']['BODY']['CONSUMER_PROFILE']['CONSUMER_DETAILS']['RUID']
-                            rrqst = run(Ruid.create(bvn=rrqst, ruid=r))
-                        except Exception as e:
-                            logger.error(e)
-                        with open(pdf__f, "wb") as fh:
-                            try:
-                                fh.write(b64decode(pdf_rez))
-                                # if both:
-                                #     with open("{}{}{} - {}.json".format(jdir, sep, acname, bvn_or_acno), 'w') as jf:
-                                #         jf.write(dumps(xml_rez['DATAPACKET']['BODY'], indent=4))
-                                logger_txt.info(acname + ' - ' + bvn_or_acno)
-                                logger.info("file {}-{}.pdf written to disk".format(acname, bvn_or_acno))
-                                logger.info('#' * 88)
-                                return bvn
-                            except Exception as e:
-                                logger.info(e)
-                        return rez[1]
-                else:
-                    # sleep(5)
-                    # payload = """{}&strRequest={}""".format(test, bvn_search(bvn))
-                    # logger.info("BVN search request re-sent for {} using {}\nrequest payload is\n{}".format(fn, bvn, payload))
-                    # response = requests.request("POST", url, data=payload, headers=headers)
-                    # rez0 = pdfRez(acname, response.text, x)
-                    # if rez0[0]:
-                    #     if rez0[1] == response.text:
-                    #         rezstr = response.text[79:-9]
-                    #     else:
-                    #         rezstr = rez0[1]
-                    #     with open("{}{}{}.pdf".format(pdf_dir, sep, acname), "wb") as fh:
-                    #         try:
-                    #             fh.write(b64decode(rezstr))
-                    #             logger_txt.info(acname)
-                    #             logger.info("{} {}".format("file {}.pdf written to disk".format(acname), '#' * 55))
-                    #         except Exception as e:
-                    #             logger.info(e)
-                    #     return rez0[1]
-                    # else:
-                    # merge multi hits
-                    # logger.info(
-                    #     dumps(order3D2dict(xmltodict.parse(order3D2dict(xmltodict.parse(response.text))['string']['#text'])),
-                    #           indent=4))
-                    try:
-                        ref, ruids = decide_merge(kwargs, rez[1])
-                        payload = """{}&strRequest={}""".format(test, merge_search(ref, ruids))
-                        logger.info(
-                            "merged report spool request sent for {} using {}\nrequest payload is\n{}".format(
-                                fn, ', '.join(ruids), payload))
-                        response = requests.request("POST", url, data=payload, headers=headers)
-                        # if '-3000' in response.text:
-
-                        # rez1 = pdfRez(acname, bvn, response.text, x)
-                        rez, rez_code, rez_dict, pdf_rez, xml_rez = hndl_rez(fn, response, logger)
-
-                        if rez[0]:
-                            for r in ruids:
-                                run(Ruid.create(bvn=rrqst, ruid=r))
-                            # if rez[1] == response.text:
-                            #     rezstr = response.text[79:-9]
-                            # else:
-                            #     rezstr = rez[1]
-                            if pdf_rez and pdf_rez not in ('', None):
-                                with open(pdf__f, "wb") as fh:
-                                    try:
-                                        fh.write(b64decode(pdf_rez))
-                                        logger_txt.info(bvn_or_acno)
-                                        if both:
-                                            with open("{}{}{} - {}.json".format(json_dir, sep, acname, bvn_or_acno),
-                                                      'w') as jf:
-                                                jf.write(dumps(xml_rez['DATAPACKET']['BODY'], indent=4))
-                                        logger.info("file {}-{}.pdf written to disk".format(acname, bvn_or_acno))
-                                        logger.info('#' * 88)
-                                        return bvn
-                                    except Exception as e:
-                                        logger.info(e)
-                                return rez[1]
-                        # # added this for those that fail repeated with error. ..
-                        else:
-                            # logger.info('\n\n\n\n\nwill recursive in 5 seconds for \n{}'.format(kwargs))
-                            # sleep(5)
-                            # while kwargs['i'] < 5:
-                            #     kwargs['i'] += 1
-                            #     try:
-                            #         call_live_request_dict(kwargs)
-                            #     except Exception as e:
-                            #         logger.error(e)
-                            logger.warning(response.text)
-                    except Exception as e:
-                        logger.error(e)
-                return rez[1]
-            return None
-        # else:
-        #     logger.info('Done!')
-
-
 @app.task
+@snoop
 def call_live_request_dict_re(kwargs):
     """Process one(1) request"""
     run(Tortoise.init(db_url="sqlite://db.sqlite3", modules={"models": ["models"]}))
@@ -289,7 +144,7 @@ def call_live_request_dict_re(kwargs):
 
     if str(fn).strip() == '':
         fn = acname
-    logger = get_logger(acname + ' - ' + bvn) if bvn and bvn not in (None, '', 'nan') else get_logger(acname)
+    logger = get_logger(f'{acname} - {bvn}') if bvn and bvn not in (None, '', 'nan') else get_logger(acname)
     try:
         rrqst = run(db.fetch_one(query=f"""select * from requests where bvn = {int(kwargs['bvn'])}"""))
     except:
@@ -306,20 +161,26 @@ def call_live_request_dict_re(kwargs):
         logger.info(pdf__f)
         if not exists(pdf__f):
             logger.info(dumps(kwargs, sort_keys=True, cls=DjangoJSONEncoder, indent=4))
-            logger.info(f"kwargs['dob']\n\n\n{kwargs['dob']=}")
-            kwargs['dob'] = kwargs['dob'] if isinstance(
-                kwargs['dob'], datetime
-            ) else datetime.strptime(kwargs['dob'][:-9], "%Y-%m-%d").date()
+
+            try:
+                kwargs['dob'] = kwargs['dob'] if isinstance(
+                    kwargs['dob'], date) else datetime.strptime(kwargs['dob'], "%Y-%m-%d").date()
+            except:
+                kwargs['dob'] = kwargs['dob'] if isinstance(
+                    kwargs['dob'], datetime) else datetime.strptime(kwargs['dob'][:-9], "%Y-%m-%d").date()
+
             logger.info(f"kwargs['dob']\n\n\n{kwargs['dob']=}")
             # return
             rqst_dob_str, rqst_gender = (
                 kwargs['dob'].strftime("%d-%b-%Y"), gender.get(kwargs['gender'].strip().upper(), '001')
             )
+            #todo
+            # BVN Search
             # payload = f"""{test}&strRequest={bvn_search(bvn)}"""
-
-            payload = f"""{test}&strRequest={name_id_search(fn, rqst_dob_str, rqst_gender)}"""
-
+            # Combine Search
             # payload = f"""{test}&strRequest={combine_search(fn, rqst_gender, rqst_dob_str, acno, bvn)}"""
+            # NameID Search
+            payload = f"""{test}&strRequest={name_id_search(fn, rqst_dob_str, rqst_gender)}"""
 
             headers = {'content-type': "application/x-www-form-urlencoded"}
             logger.info(f"{'^' * 55} \nName ID search request sent for {fn}\nrequest payload is\n{payload}")
@@ -367,14 +228,14 @@ def call_live_request_dict_re(kwargs):
                 else:
 
                     try:
-                        decide_merge(kwargs, rez[1])
+                        # decide_merge(kwargs, rez[1])
                         ref, ruids = decide_merge_hyb(kwargs, rez[1])
                         if len(ruids) > 0:
                             payload = """{}&strRequest={}""".format(
                                 test, merge_search(ref, ruids))
                             logger.info(f"""merged report spool request sent for {fn} using {', '.join(
-                                    ruids
-                                )}\nrequest payload is\n{payload}""")
+                                ruids
+                            )}\nrequest payload is\n{payload}""")
                         else:
                             payload = f"""{test}&strRequest={no_hit_search(ref)}"""
                             logger.info(f"""no hit report spool request sent for {fn} using {', '.join([
@@ -527,114 +388,8 @@ def no_hit_search(ref):
 </REQUEST>'''
 
 
-def decide_merge(reqdict, d):
-    logger_text = reqdict['cust_name'] + '-' + reqdict['bvn'] if reqdict['bvn'] else reqdict['cust_name']
-    logger = get_logger(f"{logger_text}-old")
-    # doblogger = get_logger('dob')
-    d, dob_ratio, x = xmltodict.parse(d), None, reqdict['i']
-    d = order3D2dict(d)
-    ld, ll, ua = {}, [], []
-    ref = d['DATAPACKET']['@REFERENCE-NO']
-    l = d['DATAPACKET']['BODY']['SEARCH-RESULT-LIST']['SEARCH-RESULT-ITEM']
-    prev_max_name, prev_max_dob, pruid, ruids = None, None, None, []
-    for n, i in enumerate(l):
-        logger.info(dumps(i, indent=4))
-
-        # Name merge
-        try:
-            name_ratio = fuzz.token_set_ratio(i['@NAME'], reqdict['cust_name'])
-            logger.info(f"FTSETR('{i['@NAME']}', '{reqdict['cust_name']}') is {name_ratio}")
-            # if name_ratio >= 92:
-            #     ruids.append(i['@BUREAU-ID'])
-        except Exception as e:
-            logger.error(e)
-
-        try:
-            if fuzz.partial_ratio(i['@PHONE-NUMBER'], reqdict['phone']) >= 95:
-                ruids.append(i['@BUREAU-ID'])
-        except Exception as e:
-            logger.error(e)
-        try:
-            # dob_ratio = fuzz.partial_ratio(i['@DATE-OF-BIRTH'], datetime.strptime(reqdict['dob'], '%d-%b-%Y').date())
-            dob_ratio = fuzz.partial_ratio(str(datetime.strptime(i['@DATE-OF-BIRTH'], '%d-%b-%Y')),
-                                           str(datetime.strptime(reqdict['dob'], '%d-%b-%Y')))
-
-        except Exception as e:
-            logger.error(e)
-
-        if name_ratio == 100 and dob_ratio == 100:
-            ruids.append(i['@BUREAU-ID'])
-
-        try:
-            ld[str(dob_ratio)] = i['@BUREAU-ID']
-
-            if dob_ratio in (89, 100):
-                ll.append(dob_ratio)
-
-            # logger.info("{} compared with {} is {}".format(i['@DATE-OF-BIRTH'], reqdict['dob'], dob_ratio))
-            logger.info(f"{i['@DATE-OF-BIRTH']} compared with {reqdict['dob']} is {dob_ratio}")
-
-            if dob_ratio == 100:
-                pruid = i['@BUREAU-ID']
-            if dob_ratio >= 91 and pruid is None:
-                pruid = i['@BUREAU-ID']
-            if dob_ratio == 82 and pruid is None:
-                pruid = i['@BUREAU-ID']
-
-            if len(i['@NAME'].split(' ')) > 2 or len(reqdict['cust_name'].split(' ')) > 2:
-                if name_ratio >= 92:
-                    if (dob_ratio == 100
-                            or dob_ratio >= 91
-                            or dob_ratio in (82, 64, 55, 89)):
-                        ruids.append(i['@BUREAU-ID'])
-            else:
-                if (dob_ratio == 100
-                        or dob_ratio >= 91
-                        or dob_ratio in (82, 64, 55, 89)):
-                    ruids.append(i['@BUREAU-ID'])
-
-        except Exception as e:
-            logger.error(e)
-
-        # if len(ll) == 0:
-        #     if any(li == dob_ratio for li in ll):
-        ua.append(i['@BUREAU-ID'])
-        # try:
-        #     pass
-        # except Exception as e:
-        #     logger.error(e)
-
-    if pruid is None:
-        try:
-            pruidi = max(ll)
-            pruid = ld[str(pruidi)]
-        except Exception as e:
-            logger.error(e)
-
-    if len(ruids) < 2:
-        if len(ua) > 3:
-            ruids = ll.sort(reverse=True)[:3]
-        else:
-            ruids = ua
-
-    ruids = set(ruids)
-
-    if pruid is not None:
-        while pruid in ruids:
-            ruids.remove(pruid)
-
-    if pruid is not None:
-        ruids = tuple([pruid] + list(set(ruids)))
-    else:
-        ruids = tuple(set(ruids))
-
-    logger.info(ref)
-    logger.info(ruids)
-    return ref, ruids
-
-
 def decide_merge_hyb(reqdict, d):
-    logger_text = reqdict['cust_name'] + '-' + reqdict['bvn'] if reqdict['bvn'] else reqdict['cust_name']
+    logger_text = f"{reqdict['cust_name']} - {reqdict['bvn']}" if reqdict['bvn'] else reqdict['cust_name']
     logger = get_logger(logger_text)
     d, dob_ratio, x = xmltodict.parse(d), None, reqdict['i']
     ruids, ref, d = [], d['DATAPACKET']['@REFERENCE-NO'], order3D2dict(d)
@@ -655,7 +410,7 @@ def decide_merge_hyb(reqdict, d):
         dob_check(i, logger, name_ratio, reqdict, ruids)
 
         phone_check(i, logger, name_ratio, reqdict, ruids)
-        logger.info(f"{n}of{ll} " + f"~{n}of{ll} " * 64)
+        logger.info(f"{n}of{ll} " + f"~ {n}of{ll} " * 64)
 
     logger.info(ref)
     ruids = tuple(set(ruids))
@@ -682,7 +437,7 @@ def dob_check(i, logger, name_ratio, reqdict, ruids):
         sdob = str(datetime.strptime(i['@DATE-OF-BIRTH'], '%d-%b-%Y').date())
         dob_ratio = fuzz.token_set_ratio(str(reqdict['dob']), sdob)
 
-        logger.info( f"""FPartR({sdob}, {str(reqdict['dob'])}) is {dob_ratio=}""")
+        logger.info(f"""FPartR({sdob}, {str(reqdict['dob'])}) is {dob_ratio=}""")
         if name_ratio >= 94 and dob_ratio >= 90:
             ruids.append(i['@BUREAU-ID'])
     except Exception as e:
@@ -710,32 +465,6 @@ def name_check(i, logger, name_ratio, reqdict, ruids, sb_confscr):
     except Exception as e:
         logger.error(e)
     return name_ratio
-
-
-def decide_merge_by_confscr(reqdict, d):
-    logger = get_logger(reqdict['cust_name'] + '-' + reqdict['bvn'])
-    doblogger = get_logger('dob')
-    d, dob_ratio, x = xmltodict.parse(d), None, reqdict['i']
-    d = order3D2dict(d)
-    ld, ll, ua = {}, [], []
-    ref = d['DATAPACKET']['@REFERENCE-NO']
-    l = d['DATAPACKET']['BODY']['SEARCH-RESULT-LIST']['SEARCH-RESULT-ITEM']
-    prev_max_name, prev_max_dob, pruid, ruids = None, None, None, []
-    for n, i in enumerate(l):
-        logger.info(dumps(i, indent=4))
-        # print(i)
-        # logger.info(i)
-        sb_confscr = i["@CONFIDENCE-SCORE"]
-
-        try:
-            if int(sb_confscr) >= 95:
-                ruids.append(i['@BUREAU-ID'])
-        except Exception as e:
-            logger.error(e)
-
-    logger.info(ref)
-    logger.info(ruids)
-    return ref, ruids
 
 
 def order3D2dict(input_ordered_dict):
