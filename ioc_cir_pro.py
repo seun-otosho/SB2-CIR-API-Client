@@ -1,5 +1,6 @@
 """ """
 
+from pathlib import Path
 import inspect
 import logging
 import os
@@ -22,10 +23,10 @@ from fuzzywuzzy import fuzz
 from heartrate import trace
 from tortoise import Tortoise
 
-from models import Ruid, Request
+from models import Request, Ruid, RequestTimeLog
 from test_credentials import test
 
-trace(browser=True)
+# trace(browser=True)
 
 
 db = Database('sqlite:///db.sqlite3')
@@ -46,7 +47,7 @@ app.conf.update(
     task_acks_late=True,
     worker_prefetch_multiplier=1,
     cache_backend="db+sqlite:///db.sqlite3",
-    database_engine_options={'echo': True},
+    # database_engine_options={'echo': True},
 )
 
 url = "https://webserver.creditreferencenigeria.net/crcweb/liverequestinvoker.asmx/PostRequest"
@@ -55,7 +56,6 @@ level = logging.INFO
 
 # pdir = os.path.abspath(os.path.join(os.path.abspath(os.path.join(os.path.abspath(__file__), os.pardir)), os.pardir))
 pdir = os.path.abspath(os.path.join(os.path.abspath(__file__), os.pardir))
-from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent
@@ -88,13 +88,15 @@ gender = {
 
 
 def get_logger(logger_name=dateHstr, level=level, mini=False):
-    logger_name = ''.join(logger_name.split(sep)) if logger_name and sep in logger_name else logger_name
+    logger_name = ''.join(logger_name.split(
+        sep)) if logger_name and sep in logger_name else logger_name
 
     global loggers
     if loggers.get(logger_name):
         return loggers.get(logger_name)
     else:
-        logger_name = inspect.stack()[1][3].replace('<', '').replace('>', '') if not logger_name else logger_name
+        logger_name = inspect.stack()[1][3].replace('<', '').replace(
+            '>', '') if not logger_name else logger_name
         l = logging.getLogger(logger_name)
         l.propagate = False
         # formatter = logging.Formatter('%(asctime)s : %(message)s')     %(os.getpid())s|
@@ -109,10 +111,12 @@ def get_logger(logger_name=dateHstr, level=level, mini=False):
         # '[%(asctime)s] - {%(name)s:%(lineno)d  - %(funcName)20s()} - %(levelname)s - %(message)s')
         # fileHandler = TimedRotatingFileHandler(log_dir + '%s.log' % logger_name, mode='a')
         log_dir2use = log_dir + os.sep  # + logger_name + os.sep
-        if not os.path.exists(log_dir2use): makedirs(log_dir2use)
+        if not os.path.exists(log_dir2use):
+            makedirs(log_dir2use)
         if l.handlers:
             l.handlers = []
-        fileHandler = TimedRotatingFileHandler(log_dir2use + '%s.log' % logger_name)
+        fileHandler = TimedRotatingFileHandler(
+            log_dir2use + '%s.log' % logger_name)
         fileHandler.setFormatter(formatter)
         streamHandler = logging.StreamHandler()
         streamHandler.setFormatter(formatter)
@@ -143,14 +147,17 @@ def call_live_request_dict_re(kwargs):
     run(Tortoise.init(db_url="sqlite://db.sqlite3", modules={"models": ["models"]}))
 
     acno, rrqst = None, None
-    acname, bvn, fn, x = kwargs['cust_name'], kwargs['bvn'], kwargs['cust_name'].strip(), kwargs['x']
+    acname, bvn, fn, x = kwargs['cust_name'], kwargs['bvn'], kwargs['cust_name'].strip(
+    ), kwargs['x']
     kwargs['bvn'] = kwargs['bvn'] if bvn not in (None, '', 'nan') else None
 
     if str(fn).strip() == '':
         fn = acname
-    logger = get_logger(f'{acname} - {bvn}') if bvn and bvn not in (None, '', 'nan') else get_logger(acname)
+    logger = get_logger(
+        f'{acname} - {bvn}') if bvn and bvn not in (None, '', 'nan') else get_logger(acname)
     try:
-        rrqst = run(db.fetch_one(query=f"""select * from requests where bvn = {int(kwargs['bvn'])}"""))
+        rrqst = run(db.fetch_one(
+            query=f"""select * from requests where bvn = {int(kwargs['bvn'])}"""))
     except:
         rrqst = None
 
@@ -176,9 +183,11 @@ def call_live_request_dict_re(kwargs):
             logger.info(f"kwargs['dob']\n\n\n{kwargs['dob']=}")
             # return
             rqst_dob_str, rqst_gender = (
-                kwargs['dob'].strftime("%d-%b-%Y"), gender.get(kwargs['gender'].strip().upper(), '001')
+                kwargs['dob'].strftime(
+                    "%d-%b-%Y"), gender.get(kwargs['gender'].strip().upper(), '001')
             )
-            #todo
+
+            # todo
             # BVN Search
             # payload = f"""{test}&strRequest={bvn_search(bvn)}"""
             # Combine Search
@@ -187,8 +196,11 @@ def call_live_request_dict_re(kwargs):
             payload = f"""{test}&strRequest={name_id_search(fn, rqst_dob_str, rqst_gender)}"""
 
             headers = {'content-type': "application/x-www-form-urlencoded"}
-            logger.info(f"{'^' * 55} \nName ID search request sent for {fn}\nrequest payload is\n{payload}")
+            logger.info(
+                f"{'^' * 55} \nName ID search request sent for {fn}\nrequest payload is\n{payload}")
+            date_time_start = datetime.now()
             response = requests.request("POST", url, data=payload, headers=headers)
+            initial_response = datetime.now()
 
             try:
                 rrqst = run(
@@ -200,20 +212,23 @@ def call_live_request_dict_re(kwargs):
             except Exception as e:
                 logger.error(e)
 
+
+
             if 'ERROR' in response.text and 'CODE' in response.text:
                 logger.error(
                     dumps(order3D2dict(xmltodict.parse(response.text)), indent=4))
             else:
                 # rez = pdfRez(acname, bvn, response.text, x)
 
-                rez, rez_code, rez_dict, pdf_rez, xml_rez = hndl_rez(fn, response, logger)
+                rez, rez_code, rez_dict, pdf_rez, xml_rez = hndl_rez(
+                    fn, response, logger)
 
                 if rez[0]:
 
                     if pdf_rez and pdf_rez not in ('', None):
                         try:
                             r = xml_rez['DATAPACKET']['BODY']['CONSUMER_PROFILE']['CONSUMER_DETAILS']['RUID']
-                            rrqst = run(Ruid.create(bvn=rrqst, ruid=r))
+                            run(Ruid.create(bvn=rrqst, ruid=r))
                         except Exception as e:
                             logger.error(e)
                         with open(pdf__f, "wb") as fh:
@@ -223,8 +238,12 @@ def call_live_request_dict_re(kwargs):
                                 #     with open("{}{}{} - {}.json".format(jdir, sep, acname, bvn_or_acno), 'w') as jf:
                                 #         jf.write(dumps(xml_rez['DATAPACKET']['BODY'], indent=4))
                                 # logger_txt.info(acname + ' - ' + bvn_or_acno)
-                                logger.info(f"file {pdf__f.split(sep)[-1]} has been written to disk")
+                                logger.info(
+                                    f"file {pdf__f.split(sep)[-1]} has been written to disk")
                                 logger.info('#' * 88)
+                                run(RequestTimeLog.create(
+                                    request=rrqst, date_time_start=date_time_start, final_response=initial_response
+                                ))
                                 return bvn
                             except Exception as e:
                                 logger.info(e)
@@ -245,8 +264,9 @@ def call_live_request_dict_re(kwargs):
                             logger.info(f"""no hit report spool request sent for {fn} using {', '.join([
                                 ref
                             ])}\nrequest payload is\n{payload}""")
+                        final_request_sent=datetime.now()
                         response = requests.request("POST", url, data=payload, headers=headers)
-
+                        final_response = datetime.now()
                         rez, rez_code, rez_dict, pdf_rez, xml_rez = hndl_rez(fn, response, logger)
 
                         if rez[0]:
@@ -261,6 +281,12 @@ def call_live_request_dict_re(kwargs):
 
                                         logger.info(f"file {pdf__f.split(sep)[-1]} has been written to disk")
                                         logger.info('#' * 88)
+                                        run(RequestTimeLog.create(
+                                            request=rrqst, date_time_start=date_time_start,
+                                            initial_response=initial_response,
+                                            final_request_sent=final_request_sent,
+                                            final_response=final_response
+                                        ))
                                         return bvn
                                     except Exception as e:
                                         logger.info(e)
@@ -279,7 +305,8 @@ def call_live_request_dict_re(kwargs):
 
 def dob2s(x):
     # logger.info(str(x))
-    pattern = "^(([1-9])|([0-9])|([0-2][0-9])|([3][0-1]))\-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\-\d{4}$".lower()
+    pattern = "^(([1-9])|([0-9])|([0-2][0-9])|([3][0-1]))\-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\-\d{4}$".lower(
+    )
     try:
         return datetime.strptime(str(x), '%d/%m/%Y').strftime('%d-%b-%Y')
     except Exception as e:
@@ -404,12 +431,13 @@ def decide_merge_hyb(reqdict, d):
         logger.info(f"{reqdict=}")
         logger.info(dumps(i, indent=4))
         # print(i)
-        # logger.info(i)        
+        # logger.info(i)
         name_ratio = None
 
         sb_confscr = sb_conf_score(i, logger, ruids)
 
-        name_ratio = name_check(i, logger, name_ratio, reqdict, ruids, sb_confscr)
+        name_ratio = name_check(i, logger, name_ratio,
+                                reqdict, ruids, sb_confscr)
 
         dob_check(i, logger, name_ratio, reqdict, ruids)
 
@@ -441,7 +469,8 @@ def dob_check(i, logger, name_ratio, reqdict, ruids):
         sdob = str(datetime.strptime(i['@DATE-OF-BIRTH'], '%d-%b-%Y').date())
         dob_ratio = fuzz.token_set_ratio(str(reqdict['dob']), sdob)
 
-        logger.info(f"""FPartR({sdob}, {str(reqdict['dob'])}) is {dob_ratio=}""")
+        logger.info(
+            f"""FPartR({sdob}, {str(reqdict['dob'])}) is {dob_ratio=}""")
         if name_ratio >= 94 and dob_ratio >= 90:
             ruids.append(i['@BUREAU-ID'])
     except Exception as e:
@@ -451,8 +480,10 @@ def dob_check(i, logger, name_ratio, reqdict, ruids):
 def phone_check(i, logger, name_ratio, reqdict, ruids):
     # Phone Check
     try:
-        phone_ratio = fuzz.ratio(i['@PHONE-NUMBER'][-10:], reqdict['phone'][-10:])
-        logger.info(f"FRatio('{i['@PHONE-NUMBER']}', '{reqdict['phone']}') is {phone_ratio=}")
+        phone_ratio = fuzz.ratio(
+            i['@PHONE-NUMBER'][-10:], reqdict['phone'][-10:])
+        logger.info(
+            f"FRatio('{i['@PHONE-NUMBER']}', '{reqdict['phone']}') is {phone_ratio=}")
         if name_ratio >= 94 and phone_ratio == 100:
             ruids.append(i['@BUREAU-ID'])
     except Exception as e:
@@ -463,7 +494,8 @@ def name_check(i, logger, name_ratio, reqdict, ruids, sb_confscr):
     # Name Check
     try:
         name_ratio = fuzz.token_set_ratio(i['@NAME'], reqdict['cust_name'])
-        logger.info(f"FTSETR('{i['@NAME']}', '{reqdict['cust_name']}') is {name_ratio=}")
+        logger.info(
+            f"FTSETR('{i['@NAME']}', '{reqdict['cust_name']}') is {name_ratio=}")
         if sb_confscr >= 92 and name_ratio >= 94:
             ruids.append(i['@BUREAU-ID'])
     except Exception as e:
@@ -486,7 +518,8 @@ def pdfRez(acname, resdict, logger, x):
     d = d['string']['#text']
 
     if 'ERROR-CODE' in d:
-        ec = xmltodict.parse(d)['DATAPACKET']['BODY']['ERROR-LIST']['ERROR-CODE']
+        ec = xmltodict.parse(
+            d)['DATAPACKET']['BODY']['ERROR-LIST']['ERROR-CODE']
         logger.error(dumps(order3D2dict(xmltodict.parse(d)), indent=4))
         return None, ec
 

@@ -20,6 +20,23 @@ class Request(Model):
         return self.cust_name + " " + self.dob + " " + self.gender + " " + self.bvn
 
 
+class RequestTimeLog(Model):
+    id = fields.IntField(pk=True)
+    request: fields.ForeignKeyRelation[Request] = fields.ForeignKeyField(
+        "models.Request", related_name="logs", null=True
+    )
+    date_time_start = fields.DatetimeField(auto_now_add=True)
+    initial_response = fields.DatetimeField(null=True)
+    final_request_sent = fields.DatetimeField(null=True)
+    final_response = fields.DatetimeField(null=True)
+
+    class Meta:
+        table = "request_logs"
+
+    def __str__(self):
+        return f"{self.request} log"
+
+
 class Ruid(Model):
     id = fields.IntField(pk=True)
     ruid = fields.BigIntField(null=True)
@@ -69,7 +86,7 @@ async def run():
     # await Request(name="Test 2").save()
     # print(await Request.all().values_list("id", flat=True))
     # >>> [1, 2]
-    print(await Request.all().values("id", "cust_name", "gender", "bvn"))
+    # print(await Request.all().values("id", "cust_name", "gender", "bvn"))
     # >>> [{'id': 1, 'name': 'Updated name'}, {'id': 2, 'name': 'Test 2'}]
 
 

@@ -45,7 +45,7 @@ glogger = get_logger()
 df['x'] = df.index
 df.fillna('', inplace=True)
 
-df_dict_list = df[['cust_name', 'dob', 'bvn', 'gender', 'phone', 'x']].to_dict('records')  # .sample(5)
+df_dict_list = df[['cust_name', 'dob', 'bvn', 'gender', 'phone', 'x']].sample().to_dict('records')  #
 
 for d in df_dict_list:
     try:
