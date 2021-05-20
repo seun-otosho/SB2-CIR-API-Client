@@ -5,7 +5,8 @@ from os import sep
 
 import pandas as pd
 
-from ioc_cir_pro import (db, get_logger, UP_BASE_DIR, call_live_request_dict_re, run)
+from ioc_cir_pro import (UP_BASE_DIR, call_live_request_dict_re, db,
+                         get_logger, run)
 
 # from time import sleep
 logger = get_logger()
@@ -14,6 +15,9 @@ df = pd.read_csv(
     str(UP_BASE_DIR) + sep + 'requests' + sep + 'batch_cir.txt', dtype=str,
     keep_default_na=True, sep='|', thousands=',', encoding="ISO-8859-1"
 )
+
+logger.info(df.sample())
+
 done_data = run(db.fetch_all(query="""select * from requests"""))
 cols = ['id', 'cust_name', 'dob', 'gender', 'bvn', 'phone', 'date_process']
 ddf = pd.DataFrame(done_data, columns=cols)
@@ -23,7 +27,7 @@ df['bvn'] = df.bvn.astype(str)
 ddf['bvn'] = ddf.bvn.astype(str)
 
 df = df[~df.bvn.isin(ddf.bvn)]
-df['bvn'] = df.bvn.apply(lambda x: int(x) if x not in (None, '', 'nan') else '')
+# df['bvn'] = df.bvn.apply(lambda x: int(x) if x not in (None, '', 'nan') else '')
 
 df.reset_index(drop=True, inplace=True)
 
@@ -45,7 +49,7 @@ glogger = get_logger()
 df['x'] = df.index
 df.fillna('', inplace=True)
 
-df_dict_list = df[['cust_name', 'dob', 'bvn', 'gender', 'phone', 'x']].sample().to_dict('records')  #
+df_dict_list = df[['cust_name', 'dob', 'bvn', 'gender', 'phone', 'acno', 'x']].to_dict('records')  # .sample()
 
 for d in df_dict_list:
     try:

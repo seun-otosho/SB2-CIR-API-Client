@@ -1,6 +1,5 @@
 """ """
 
-from pathlib import Path
 import inspect
 import logging
 import os
@@ -11,6 +10,8 @@ from json import dumps, loads
 from logging.handlers import TimedRotatingFileHandler
 from os import makedirs, sep
 from os.path import exists, join, sep
+from pathlib import Path
+from random import choice
 from re import match
 
 import requests
@@ -23,7 +24,7 @@ from fuzzywuzzy import fuzz
 from heartrate import trace
 from tortoise import Tortoise
 
-from models import Request, Ruid, RequestTimeLog
+from models import Request, RequestTimeLog, Ruid
 from test_credentials import test
 
 # trace(browser=True)
@@ -140,11 +141,12 @@ logger_txt = get_logger(user_str, level, True)
 #     return True if bvn in recon_list else False
 
 
+# @snoop
 @app.task
-@snoop
 def call_live_request_dict_re(kwargs):
     """Process one(1) request"""
-    run(Tortoise.init(db_url="sqlite://db.sqlite3", modules={"models": ["models"]}))
+    run(Tortoise.init(db_url="sqlite://db.sqlite3",
+                      modules={"models": ["models"]}))
 
     acno, rrqst = None, None
     acname, bvn, fn, x = kwargs['cust_name'], kwargs['bvn'], kwargs['cust_name'].strip(
@@ -171,48 +173,64 @@ def call_live_request_dict_re(kwargs):
         pdf__f = f"{pdf_dir}{sep}{acname}.pdf" if bvn_or_acno is None else f"{pdf_dir}{sep}{acname} - {bvn_or_acno}.pdf"
         logger.info(pdf__f)
         if not exists(pdf__f):
-            logger.info(dumps(kwargs, sort_keys=True, cls=DjangoJSONEncoder, indent=4))
+            logger.info(dumps(kwargs, sort_keys=True,
+                              cls=DjangoJSONEncoder, indent=4))
 
-            try:
+            logger.info(f"{kwargs['dob']=}")
+
+            try:                
                 kwargs['dob'] = kwargs['dob'] if isinstance(
                     kwargs['dob'], date) else datetime.strptime(kwargs['dob'], "%Y-%m-%d").date()
-            except:
-                kwargs['dob'] = kwargs['dob'] if isinstance(
-                    kwargs['dob'], datetime) else datetime.strptime(kwargs['dob'][:-9], "%Y-%m-%d").date()
+            except Exception as e:
+                logger.error(e)
+                try:
+                    kwargs['dob'] = kwargs['dob'] if isinstance(
+                        kwargs['dob'], datetime) else datetime.strptime(kwargs['dob'][:-9], "%Y-%m-%d").date()
+                except Exception as e:
+                    logger.error(e)
+            
+            logger.info(f"{kwargs['dob']=}")
 
             logger.info(f"kwargs['dob']\n\n\n{kwargs['dob']=}")
             # return
-            rqst_dob_str, rqst_gender = (
-                kwargs['dob'].strftime(
-                    "%d-%b-%Y"), gender.get(kwargs['gender'].strip().upper(), '001')
-            )
+            rqst_gender = gender.get(kwargs['gender'].strip().upper(), '001')
 
             # todo
             # BVN Search
             # payload = f"""{test}&strRequest={bvn_search(bvn)}"""
+            # NameID Search
+            # payload = f"""{test}&strRequest={name_id_search(fn, rqst_dob_str, rqst_gender)}"""
             # Combine Search
             # payload = f"""{test}&strRequest={combine_search(fn, rqst_gender, rqst_dob_str, acno, bvn)}"""
-            # NameID Search
-            payload = f"""{test}&strRequest={name_id_search(fn, rqst_dob_str, rqst_gender)}"""
+
+            # random choice for test purposes online
+            payload = choice([
+                # bvn search
+                f"""{test}&strRequest={bvn_search(bvn)}""",
+                # name ID search
+                f"""{test}&strRequest={name_id_search(fn, kwargs['dob'], rqst_gender)}""",
+                # combine search
+                f"""{test}&strRequest={combine_search(fn, rqst_gender, kwargs['dob'], acno, bvn)}""",
+            ])
 
             headers = {'content-type': "application/x-www-form-urlencoded"}
             logger.info(
                 f"{'^' * 55} \nName ID search request sent for {fn}\nrequest payload is\n{payload}")
             date_time_start = datetime.now()
-            response = requests.request("POST", url, data=payload, headers=headers)
+            response = requests.request(
+                "POST", url, data=payload, headers=headers)
             initial_response = datetime.now()
 
             try:
                 rrqst = run(
                     Request.create(
-                        cust_name=kwargs['cust_name'], dob=kwargs['dob'].strftime("%Y-%m-%d"),
+                        cust_name=kwargs['cust_name'], dob=kwargs['dob'].strftime(
+                            "%Y-%m-%d"),
                         gender=kwargs['gender'], bvn=kwargs['bvn'], phone=kwargs['phone']
                     )
                 )
             except Exception as e:
                 logger.error(e)
-
-
 
             if 'ERROR' in response.text and 'CODE' in response.text:
                 logger.error(
@@ -264,10 +282,12 @@ def call_live_request_dict_re(kwargs):
                             logger.info(f"""no hit report spool request sent for {fn} using {', '.join([
                                 ref
                             ])}\nrequest payload is\n{payload}""")
-                        final_request_sent=datetime.now()
-                        response = requests.request("POST", url, data=payload, headers=headers)
+                        final_request_sent = datetime.now()
+                        response = requests.request(
+                            "POST", url, data=payload, headers=headers)
                         final_response = datetime.now()
-                        rez, rez_code, rez_dict, pdf_rez, xml_rez = hndl_rez(fn, response, logger)
+                        rez, rez_code, rez_dict, pdf_rez, xml_rez = hndl_rez(
+                            fn, response, logger)
 
                         if rez[0]:
                             for r in ruids:
@@ -279,7 +299,8 @@ def call_live_request_dict_re(kwargs):
                                         fh.write(b64decode(pdf_rez))
                                         logger_txt.info(bvn_or_acno)
 
-                                        logger.info(f"file {pdf__f.split(sep)[-1]} has been written to disk")
+                                        logger.info(
+                                            f"file {pdf__f.split(sep)[-1]} has been written to disk")
                                         logger.info('#' * 88)
                                         run(RequestTimeLog.create(
                                             request=rrqst, date_time_start=date_time_start,
