@@ -1,4 +1,4 @@
-tortoise
+tortoise-orm
 pandas
 numpy
 requests
